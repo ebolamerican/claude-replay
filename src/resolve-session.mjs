@@ -2,9 +2,51 @@
  * Resolve a session ID to a full file path by scanning known session directories.
  */
 
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+
+let _HermesDatabaseSync = null;
+try {
+  const { createRequire: _cr } = await import("node:module");
+  const _req = _cr(import.meta.url);
+  _HermesDatabaseSync = _req("node:sqlite").DatabaseSync;
+} catch { /* no sqlite */ }
+
+function hermesMatches(sessionId, homeDir) {
+  const DatabaseSync = _HermesDatabaseSync;
+  if (!DatabaseSync) return [];
+  const dbPaths = [];
+  const base = join(homeDir, ".hermes", "state.db");
+  if (existsSync(base)) dbPaths.push(base);
+  const profilesDir = join(homeDir, ".hermes", "profiles");
+  try {
+    for (const name of readdirSync(profilesDir)) {
+      const p = join(profilesDir, name, "state.db");
+      if (existsSync(p)) dbPaths.push(p);
+    }
+  } catch { /* ignore */ }
+  const out = [];
+  for (const dbPath of dbPaths) {
+    let db;
+    try { db = new DatabaseSync(dbPath, { readOnly: true }); } catch { continue; }
+    try {
+      const row = db.prepare("SELECT id FROM sessions WHERE id = ?").get(sessionId);
+      if (row) {
+        // exact match
+        out.push({ path: `${dbPath}#session:${sessionId}`, project: dbPath.includes("/profiles/") ? dbPath.split("/profiles/").pop().split("/")[0] : "default", group: "Hermes" });
+        continue;
+      }
+      // prefix match (short id)
+      const pref = db.prepare("SELECT id FROM sessions WHERE id LIKE ? LIMIT 5").all(sessionId + "%");
+      for (const r of pref) {
+        out.push({ path: `${dbPath}#session:${r.id}`, project: dbPath.includes("/profiles/") ? dbPath.split("/profiles/").pop().split("/")[0] : "default", group: "Hermes" });
+      }
+    } catch { /* ignore */ }
+    finally { try { db.close(); } catch {} }
+  }
+  return out;
+}
 
 /**
  * Find session files matching the given ID.
@@ -16,6 +58,12 @@ export function resolveSessionId(sessionId, { home } = {}) {
   const homeDir = home || homedir();
   const target = sessionId.endsWith(".jsonl") ? sessionId : sessionId + ".jsonl";
   const matches = [];
+
+  // Hermes first — virtual SQLite path. Supports full ID and prefix.
+  try {
+    const hm = hermesMatches(sessionId, homeDir);
+    for (const m of hm) matches.push(m);
+  } catch { /* ignore */ }
 
   // Claude Code: ~/.claude/projects/<project>/<id>.jsonl
   const claudeBase = join(homeDir, ".claude", "projects");

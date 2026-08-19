@@ -7,8 +7,9 @@
  * To add support for a new agent/CLI, see CONTRIBUTING.md.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { detectFormatFromText, parseFromText } from "./formats/index.mjs";
+import { isHermesVirtualPath, parseHermesVirtualPath, readHermesSessionText } from "./hermes-db.mjs";
 
 /**
  * @typedef {import("./formats/shared.mjs").ToolCall} ToolCall
@@ -21,19 +22,34 @@ export { detectFormatFromText };
 
 /**
  * Detect transcript format by reading a file.
+ * Handles Hermes virtual paths (`~/.hermes/state.db#session:<id>`) directly.
  * @param {string} filePath
  * @returns {string}
  */
 export function detectFormat(filePath) {
-  return detectFormatFromText(readFileSync(filePath, "utf-8"));
+  if (isHermesVirtualPath(filePath)) return "hermes";
+  const parsed = parseHermesVirtualPath(filePath);
+  if (parsed) return "hermes";
+  try {
+    return detectFormatFromText(readFileSync(filePath, "utf-8"));
+  } catch { return "unknown"; }
 }
 
 /**
  * Parse a JSONL/JSON transcript file into Turn[].
+ * Hermes virtual paths are read from SQLite.
  * @param {string} filePath
  * @returns {Turn[]}
  */
 export function parseTranscript(filePath) {
+  if (isHermesVirtualPath(filePath)) {
+    const p = parseHermesVirtualPath(filePath);
+    if (p) {
+      const text = readHermesSessionText(p.dbPath, p.sessionId);
+      if (text) return parseFromText(text);
+    }
+    return [];
+  }
   return parseTranscriptFromText(readFileSync(filePath, "utf-8"));
 }
 

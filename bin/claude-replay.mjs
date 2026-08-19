@@ -231,6 +231,11 @@ if (positionals.length > MAX_INPUTS) {
 
 const inputFiles = [];
 for (const arg of positionals) {
+  // Hermes virtual path like ~/.hermes/state.db#session:ID — treat as valid input even though existsSync is false due to the fragment
+  if (arg.includes("#session:")) {
+    const frag = arg.split("#session:")[0];
+    if (existsSync(frag)) { inputFiles.push(arg); continue; }
+  }
   if (existsSync(arg)) {
     inputFiles.push(arg);
   } else if (!arg.endsWith(".jsonl") && !arg.endsWith(".json")) {
@@ -239,7 +244,7 @@ for (const arg of positionals) {
     const matches = resolveSessionId(arg);
     if (matches.length === 0) {
       console.error(`Error: no session found matching "${arg}"`);
-      console.error("Searched ~/.claude/projects/, ~/.cursor/projects/, ~/.codex/sessions/, and ~/.gemini/tmp/");
+      console.error("Searched ~/.claude/projects/, ~/.cursor/projects/, ~/.codex/sessions/, ~/.gemini/tmp/, and Hermes SQLite (~/.hermes/state.db)");
       process.exit(1);
     } else if (matches.length === 1) {
       inputFiles.push(matches[0].path);
@@ -350,16 +355,39 @@ if (hasReadingWpm) {
 
 const speed = parseFloat(values.speed) || 1.0;
 
-// Derive title: CLI override > parent folder name > filename
+// Derive title: CLI override > Hermes session title > parent folder name > filename
 let title = values.title;
 if (!title) {
-  const dir = basename(dirname(inputFiles[0]));
-  const parts = dir.replace(/^-+/, "").split("-");
-  const projectName = parts.length > 1 ? parts.slice(-2).join("-") : parts[0];
-  if (projectName && projectName !== "." && projectName !== "/") {
-    title = "Replay — " + projectName;
+  let hermesTitle = null;
+  try {
+    const firstInput = inputFiles[0];
+    if (firstInput) {
+      if (firstInput.includes("#session:")) {
+        const { readHermesSessionRaw, parseHermesVirtualPath: _p } = await import("../src/hermes-db.mjs");
+        const vp = _p(firstInput);
+        if (vp) {
+          const raw = readHermesSessionRaw(vp.dbPath, vp.sessionId);
+          if (raw && raw.title) hermesTitle = raw.title;
+        }
+      } else if (existsSync(firstInput)) {
+        // Hermes raw export file on disk — extract title from file content
+        const { extractTitle: _hermesExtractTitle } = await import("../src/formats/hermes.mjs");
+        hermesTitle = _hermesExtractTitle(readFileSync(firstInput, "utf-8"));
+      }
+    }
+  } catch {}
+  if (hermesTitle) {
+    title = "Replay — " + hermesTitle;
   } else {
-    title = "Replay — " + basename(inputFiles[0], ".jsonl");
+    const rawName = (inputFiles[0] || "").split("#session:")[0];
+    const dir = basename(dirname(rawName));
+    const parts = dir.replace(/^-+/, "").split("-");
+    const projectName = parts.length > 1 ? parts.slice(-2).join("-") : parts[0];
+    if (projectName && projectName !== "." && projectName !== "/") {
+      title = "Replay — " + projectName;
+    } else {
+      title = "Replay — " + basename(rawName, ".jsonl");
+    }
   }
 }
 
@@ -488,7 +516,7 @@ function buildReplay() {
     redactSecrets: !values["no-auto-redact"],
     redactRules,
     userLabel: values["user-label"],
-    assistantLabel: values["assistant-label"] || (format === "gemini" ? "Gemini" : format === "codex" ? "Codex" : format === "cursor" ? "Assistant" : format === "opencode" ? "OpenCode" : format === "kimi-code" ? "Kimi" : "Claude"),
+    assistantLabel: values["assistant-label"] || (format === "hermes" ? "Sandi" : format === "gemini" ? "Gemini" : format === "codex" ? "Codex" : format === "cursor" ? "Assistant" : format === "opencode" ? "OpenCode" : format === "kimi-code" ? "Kimi" : "Claude"),
     title,
     description: values.description,
     ogImage: values["og-image"],
