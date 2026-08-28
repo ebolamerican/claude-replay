@@ -358,24 +358,22 @@ const speed = parseFloat(values.speed) || 1.0;
 // Derive title: CLI override > Hermes session title > parent folder name > filename
 let title = values.title;
 if (!title) {
+  // Hermes sessions carry their own title; other formats derive it from the path.
   let hermesTitle = null;
   try {
     const firstInput = inputFiles[0];
-    if (firstInput) {
+    if (firstInput && detectFormat(firstInput) === "hermes") {
       if (firstInput.includes("#session:")) {
-        const { readHermesSessionRaw, parseHermesVirtualPath: _p } = await import("../src/hermes-db.mjs");
-        const vp = _p(firstInput);
-        if (vp) {
-          const raw = readHermesSessionRaw(vp.dbPath, vp.sessionId);
-          if (raw && raw.title) hermesTitle = raw.title;
-        }
-      } else if (existsSync(firstInput)) {
-        // Hermes raw export file on disk — extract title from file content
-        const { extractTitle: _hermesExtractTitle } = await import("../src/formats/hermes.mjs");
-        hermesTitle = _hermesExtractTitle(readFileSync(firstInput, "utf-8"));
+        const { readHermesSessionRaw, parseHermesVirtualPath } = await import("../src/hermes-db.mjs");
+        const vp = parseHermesVirtualPath(firstInput);
+        const raw = vp && readHermesSessionRaw(vp.dbPath, vp.sessionId);
+        if (raw && raw.title) hermesTitle = raw.title;
+      } else {
+        const { extractTitle } = await import("../src/formats/hermes.mjs");
+        hermesTitle = extractTitle(readFileSync(firstInput, "utf-8"));
       }
     }
-  } catch {}
+  } catch { /* fall back to path-derived title */ }
   if (hermesTitle) {
     title = "Replay — " + hermesTitle;
   } else {
@@ -516,7 +514,7 @@ function buildReplay() {
     redactSecrets: !values["no-auto-redact"],
     redactRules,
     userLabel: values["user-label"],
-    assistantLabel: values["assistant-label"] || (format === "hermes" ? "Sandi" : format === "gemini" ? "Gemini" : format === "codex" ? "Codex" : format === "cursor" ? "Assistant" : format === "opencode" ? "OpenCode" : format === "kimi-code" ? "Kimi" : "Claude"),
+    assistantLabel: values["assistant-label"] || (format === "hermes" ? "Hermes" : format === "gemini" ? "Gemini" : format === "codex" ? "Codex" : format === "cursor" ? "Assistant" : format === "opencode" ? "OpenCode" : format === "kimi-code" ? "Kimi" : "Claude"),
     title,
     description: values.description,
     ogImage: values["og-image"],
@@ -594,13 +592,15 @@ if (values.serve) {
 
   if (values.watch) {
     let debounce;
-    for (const file of inputFiles) {
+    // Hermes virtual paths aren't real files — watch the underlying SQLite DB.
+    const watchPaths = new Set(inputFiles.map((f) => f.split("#session:")[0]));
+    for (const file of watchPaths) {
       fsWatch(file, () => {
         clearTimeout(debounce);
         debounce = setTimeout(rebuild, 300);
       });
     }
-    console.error(`Watching ${inputFiles.length} file(s) for changes...`);
+    console.error(`Watching ${watchPaths.size} file(s) for changes...`);
   }
 
   server.listen(servePort, () => {
@@ -631,13 +631,15 @@ if (values.serve) {
 
   rebuild();
   let debounce;
-  for (const file of inputFiles) {
+  // Hermes virtual paths aren't real files — watch the underlying SQLite DB.
+  const watchPaths = new Set(inputFiles.map((f) => f.split("#session:")[0]));
+  for (const file of watchPaths) {
     fsWatch(file, () => {
       clearTimeout(debounce);
       debounce = setTimeout(rebuild, 300);
     });
   }
-  console.error(`Watching ${inputFiles.length} file(s) for changes...`);
+  console.error(`Watching ${watchPaths.size} file(s) for changes...`);
 } else {
   // Normal mode: build once and output
   const { html, turnCount } = buildReplay();

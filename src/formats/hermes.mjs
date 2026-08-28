@@ -99,7 +99,7 @@ function toIso(timestamp) {
   return Number.isNaN(d.getTime()) ? "" : d.toISOString();
 }
 
-function parseToolCalls(raw, _msgId) {
+function parseToolCalls(raw) {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw;
   if (typeof raw !== "string" || !raw.trim()) return [];
@@ -136,7 +136,6 @@ export function detect(obj) {
     typeof obj === "object" &&
     Array.isArray(obj.messages) &&
     (obj.source !== undefined || obj.id !== undefined) &&
-    obj.messages.length >= 0 &&
     // At least hint it's Hermes: messages use {role,timestamp} with numeric
     // timestamp or have tool_calls, not Claude's {type,message,timestamp}.
     (obj.messages.length === 0 ||
@@ -209,11 +208,9 @@ function buildTurnsFromHermesMessages(messages) {
   // Pending tool_use blocks awaiting their role:"tool" result, keyed by call id.
   const pending = new Map();
   let currentTurn = null;
-  const newTurn = (userText, ts, isCompaction, compacted) => {
+  const newTurn = (userText, ts) => {
     turnIndex++;
     const t = { index: turnIndex, user_text: userText, blocks: [], timestamp: ts || "" };
-    if (isCompaction) t.is_compaction = true;
-    if (compacted) t.compacted = true;
     turns.push(t);
     currentTurn = t;
     return t;
@@ -235,8 +232,7 @@ function buildTurnsFromHermesMessages(messages) {
     if (role === "user") {
       const text = (msg.content || "").trim();
       if (!text) continue;
-      const isCompaction = text.startsWith("[CONTEXT COMPACTION");
-      newTurn(text, ts, isCompaction, !!msg.compacted);
+      newTurn(text, ts);
       continue;
     }
 
@@ -277,7 +273,7 @@ function buildTurnsFromHermesMessages(messages) {
 
       // All assistant rows until the next user belong to the same turn.
       if (!currentTurn) {
-        newTurn("", ts, false, false);
+        newTurn("", ts);
       }
       currentTurn.blocks.push(...blocks);
       if (!currentTurn.timestamp) currentTurn.timestamp = ts;

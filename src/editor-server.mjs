@@ -13,7 +13,7 @@ import { extractTitle } from "./formats/claude-code.mjs";
 import { render } from "./renderer.mjs";
 import { extractData } from "./extract.mjs";
 import { getTheme, listThemes } from "./themes.mjs";
-import { listHermesSessions } from "./hermes-db.mjs";
+import { listHermesSessions, isHermesVirtualPath, parseHermesVirtualPath, readHermesSessionText, hermesProfileForDbPath } from "./hermes-db.mjs";
 import { DEFAULT_READING_WPM, MIN_READING_WPM, MAX_READING_WPM } from "./reading-rate.mjs";
 
 const EDITOR_HTML_PATH = new URL("../template/editor.html", import.meta.url);
@@ -550,9 +550,7 @@ function discoverSessions() {
       // Group by profile for clearer navigation
       const byProfile = new Map();
       for (const sess of hermesSessions) {
-        // path is like /Users/josh/.hermes/profiles/codex/state.db#session:ID
-        const dbPart = sess.path.split("#session:")[0];
-        const profile = dbPart.includes("/profiles/") ? dbPart.split("/profiles/").pop().split("/")[0] : "default";
+        const profile = hermesProfileForDbPath(sess._hermesDbPath || sess.path.split("#session:")[0]);
         if (!byProfile.has(profile)) byProfile.set(profile, []);
         byProfile.get(profile).push(sess);
       }
@@ -627,9 +625,8 @@ async function handleApi(req, res, pathname) {
           if (results.length >= MAX_RESULTS) break;
           try {
             let text;
-            if (sess.path.includes("#session:")) {
-              const { readHermesSessionText, parseHermesVirtualPath: _parseVP } = await import("./hermes-db.mjs");
-              const vp = _parseVP(sess.path);
+            if (isHermesVirtualPath(sess.path)) {
+              const vp = parseHermesVirtualPath(sess.path);
               text = vp ? (readHermesSessionText(vp.dbPath, vp.sessionId) || "") : "";
             } else {
               text = readFileSync(sess.path, "utf-8");

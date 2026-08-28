@@ -1,13 +1,13 @@
 /**
  * Parse AI coding session transcripts into structured turns.
  *
- * Supports: Claude Code, Cursor, Codex CLI, Gemini CLI, OpenCode, and replay JSONL.
+ * Supports: Claude Code, Cursor, Codex CLI, Gemini CLI, OpenCode, Kimi Code, Hermes Agent, and replay JSONL.
  *
  * This module is the public API — it delegates to format-specific parsers in src/formats/.
  * To add support for a new agent/CLI, see CONTRIBUTING.md.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { detectFormatFromText, parseFromText } from "./formats/index.mjs";
 import { isHermesVirtualPath, parseHermesVirtualPath, readHermesSessionText } from "./hermes-db.mjs";
 
@@ -28,11 +28,7 @@ export { detectFormatFromText };
  */
 export function detectFormat(filePath) {
   if (isHermesVirtualPath(filePath)) return "hermes";
-  const parsed = parseHermesVirtualPath(filePath);
-  if (parsed) return "hermes";
-  try {
-    return detectFormatFromText(readFileSync(filePath, "utf-8"));
-  } catch { return "unknown"; }
+  return detectFormatFromText(readFileSync(filePath, "utf-8"));
 }
 
 /**

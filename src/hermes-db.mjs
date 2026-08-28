@@ -15,7 +15,7 @@
  */
 
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { homedir } from "node:os";
 
 let DatabaseSync = null;
@@ -84,6 +84,49 @@ export function getHermesDbPathsSync(homeDir = homedir()) {
 }
 
 /**
+ * Profile name for a Hermes DB path: "codex" for
+ * ~/.hermes/profiles/codex/state.db, "default" for ~/.hermes/state.db.
+ */
+export function hermesProfileForDbPath(dbPath) {
+  const marker = sep + "profiles" + sep;
+  const idx = dbPath.indexOf(marker);
+  if (idx === -1) return "default";
+  return dbPath.slice(idx + marker.length).split(sep)[0] || "default";
+}
+
+/**
+ * Find sessions whose ID matches `idOrPrefix` (exact first, then prefix)
+ * across the default DB and all profile DBs. Returns [{ dbPath, id }].
+ */
+export function matchHermesSessionIds(idOrPrefix, homeDir = homedir()) {
+  if (!DatabaseSync) return [];
+  const out = [];
+  for (const dbPath of getHermesDbPaths(homeDir)) {
+    let db;
+    try {
+      db = new DatabaseSync(dbPath, { readOnly: true });
+    } catch { continue; }
+    try {
+      const exact = db.prepare("SELECT id FROM sessions WHERE id = ?").get(idOrPrefix);
+      if (exact) {
+        out.push({ dbPath, id: exact.id });
+        continue;
+      }
+      // Escape LIKE wildcards — Hermes IDs contain underscores.
+      const escaped = idOrPrefix.replace(/[\\%_]/g, (c) => "\\" + c);
+      const rows = db.prepare(
+        "SELECT id FROM sessions WHERE id LIKE ? ESCAPE '\\' LIMIT 5",
+      ).all(escaped + "%");
+      for (const r of rows) out.push({ dbPath, id: r.id });
+    } catch { /* ignore per-db errors */ }
+    finally {
+      try { db.close(); } catch { /* ignore */ }
+    }
+  }
+  return out;
+}
+
+/**
  * Read a single Hermes session from SQLite and return the raw export shape
  * { id, title, source, cwd, model, started_at, messages: [...] } or null.
  * Sync — suitable for use from the parser and CLI hot path.
@@ -104,13 +147,10 @@ export function readHermesSessionRaw(dbPath, sessionId) {
     const session = db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId);
     if (!session) return null;
 
+    // SELECT * so DBs from older/newer Hermes versions (whose message columns
+    // differ) still load; the parser tolerates missing fields.
     const messages = db.prepare(
-      `SELECT id, role, content, tool_calls, tool_call_id, tool_name,
-              timestamp, reasoning, reasoning_content, reasoning_details,
-              compacted, session_id
-       FROM messages
-       WHERE session_id = ?
-       ORDER BY timestamp ASC, id ASC`,
+      "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp ASC, id ASC",
     ).all(sessionId);
 
     return {

@@ -1,4 +1,3 @@
-
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { parseTranscriptFromText, detectFormatFromText } from "../src/parser.mjs";
