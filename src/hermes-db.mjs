@@ -17,11 +17,13 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, sep } from "node:path";
 import { homedir } from "node:os";
+import { createRequire } from "node:module";
 
+// Synchronous probe (no top-level await — this module is part of the browser
+// bundle, where the shimmed createRequire throws and DatabaseSync stays null).
 let DatabaseSync = null;
 try {
-  const mod = await import("node:sqlite");
-  DatabaseSync = mod.DatabaseSync;
+  DatabaseSync = createRequire(import.meta.url)("node:sqlite").DatabaseSync;
 } catch {
   DatabaseSync = null;
 }
